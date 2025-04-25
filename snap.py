@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import messagebox
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from datetime import datetime
+from docx import Document
+from pathlib import Path
 import os
 
 class MSnapApp(tk.Tk):
@@ -13,11 +15,10 @@ class MSnapApp(tk.Tk):
 
         self.dropdown_fields_common = {
             "Stray?": ["Yes", "No", "N/A"],
-            "Older than 5 years?": ["Yes", "No", "N/A"],
-            "Dog weight range?": ["Yes", "No", "N/A"],
-            "Special": ["Yes", "No", "N/A"]
+            "Older than 5 years?": ["Yes", "No", "N/A"]
         }
         self.gender_field = {"Gender": ["Male", "Female", "N/A"]}
+        self.yes_no_field = {"Within Morg city limits?": ["Yes", "No"]}
 
         self.init_data()
         self.build_frames()
@@ -30,18 +31,18 @@ class MSnapApp(tk.Tk):
 
         self.data = {
             "Recipient Information": {
-                "Mail to Name": tk.StringVar(),
+                "First Name": tk.StringVar(),
+                "Last Name": tk.StringVar(),
                 "Day phone(s)": tk.StringVar(),
                 "Street, Apt # OR PO Box": tk.StringVar(),
                 "City": tk.StringVar(),
                 "Zip": tk.StringVar(),
-                "Within Morg city limits?": tk.StringVar(),
+                "Within Morg city limits?": tk.StringVar(value="No"),
                 "POB only: closest town": tk.StringVar(),
                 "How did you hear about M-SNAP?": tk.StringVar(),
                 "Name on voucher": tk.StringVar()
             }
         }
-
         for i in range(1, 4):
             section = f"Pet {i} Information"
             self.data[section] = {
@@ -53,8 +54,8 @@ class MSnapApp(tk.Tk):
                 "Distinguishing characteristic(s)": tk.StringVar(),
                 "Stray?": tk.StringVar(value="N/A"),
                 "Older than 5 years?": tk.StringVar(value="N/A"),
-                "Dog weight range?": tk.StringVar(value="N/A"),
-                "Special": tk.StringVar(value="N/A"),
+                "Dog weight range?": tk.StringVar(),  # Now text input
+                "Special": tk.StringVar(),            # Now text input
                 "Voucher": tk.StringVar(),
                 "Sent": tk.StringVar(),
                 "Expires": tk.StringVar(),
@@ -62,123 +63,231 @@ class MSnapApp(tk.Tk):
             }
 
     def build_frames(self):
-        for index, (section, fields) in enumerate(self.data.items()):
+        for idx, (section, fields) in enumerate(self.data.items()):
             frame = tk.Frame(self, padx=20, pady=20)
-            title = tk.Label(frame, text=section, font=('Arial', 16, 'bold'))
-            title.grid(row=0, column=0, columnspan=2, pady=(0, 20))
-
+            tk.Label(frame, text=section, font=('Arial', 16, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0,20))
             row = 1
             for label, var in fields.items():
-                tk.Label(frame, text=label, anchor='w', width=30).grid(row=row, column=0, sticky='w', padx=5, pady=5)
-
-                if section.startswith("Pet") and label in self.dropdown_fields_common:
-                    dropdown = tk.OptionMenu(frame, var, *self.dropdown_fields_common[label])
-                    dropdown.config(width=38)
-                    dropdown.grid(row=row, column=1, padx=5, pady=5)
+                tk.Label(frame, text=label, width=30, anchor='w').grid(row=row, column=0, padx=5, pady=5, sticky='w')
+                if section == "Recipient Information" and label in self.yes_no_field:
+                    opt = tk.OptionMenu(frame, var, *self.yes_no_field[label])
+                    opt.config(width=38)
+                    opt.grid(row=row, column=1, padx=5, pady=5)
+                elif section.startswith("Pet") and label in self.dropdown_fields_common:
+                    opt = tk.OptionMenu(frame, var, *self.dropdown_fields_common[label])
+                    opt.config(width=38)
+                    opt.grid(row=row, column=1, padx=5, pady=5)
                 elif section.startswith("Pet") and label in self.gender_field:
-                    dropdown = tk.OptionMenu(frame, var, *self.gender_field[label])
-                    dropdown.config(width=38)
-                    dropdown.grid(row=row, column=1, padx=5, pady=5)
+                    opt = tk.OptionMenu(frame, var, *self.gender_field[label])
+                    opt.config(width=38)
+                    opt.grid(row=row, column=1, padx=5, pady=5)
                 else:
                     tk.Entry(frame, textvariable=var, width=40).grid(row=row, column=1, padx=5, pady=5)
                 row += 1
 
-            # Add "Add another pet?" checkbox if applicable
             if section in ["Pet 1 Information", "Pet 2 Information"]:
-                var_flag = tk.IntVar()
-                self.add_another_pet_flags[section] = var_flag
-                cb = tk.Checkbutton(frame, text="Add another pet?", variable=var_flag)
-                cb.grid(row=row, column=0, columnspan=2, pady=(10, 5))
+                flag = tk.IntVar()
+                self.add_another_pet_flags[section] = flag
+                tk.Checkbutton(frame, text="Add another pet?", variable=flag).grid(row=row, column=0, columnspan=2, pady=(10,5))
                 row += 1
 
-            # Button frame
-            button_frame = tk.Frame(frame)
-            button_frame.grid(row=row, column=0, columnspan=2, pady=20)
-
-            # Back button (not on first frame)
-            if index > 0:
-                tk.Button(button_frame, text="Back", command=self.prev_frame).pack(side=tk.LEFT, padx=5)
-
-            # Next or Submit button
+            btn_frame = tk.Frame(frame)
+            btn_frame.grid(row=row, column=0, columnspan=2, pady=20)
+            if idx > 0:
+                tk.Button(btn_frame, text="Back", command=self.prev_frame).pack(side=tk.LEFT, padx=5)
             if section in ["Pet 1 Information", "Pet 2 Information"]:
-                tk.Button(button_frame, text="Next", command=lambda sec=section: self.handle_pet_next(sec)).pack(side=tk.LEFT, padx=5)
+                tk.Button(btn_frame, text="Next", command=lambda sec=section: self.handle_pet_next(sec)).pack(side=tk.LEFT, padx=5)
             elif section == "Recipient Information":
-                tk.Button(button_frame, text="Next", command=self.next_frame).pack(side=tk.LEFT, padx=5)
+                tk.Button(btn_frame, text="Next", command=self.next_frame).pack(side=tk.LEFT, padx=5)
             else:
-                tk.Button(button_frame, text="Submit", command=self.export_to_excel).pack(side=tk.LEFT, padx=5)
+                tk.Button(btn_frame, text="Submit", command=self.export_to_excel).pack(side=tk.LEFT, padx=5)
 
             self.frames.append(frame)
 
     def handle_pet_next(self, section):
-        flag = self.add_another_pet_flags[section].get()
-        if section == "Pet 1 Information":
-            self.show_frame(2) if flag else self.export_to_excel()
-        elif section == "Pet 2 Information":
-            self.show_frame(3) if flag else self.export_to_excel()
+        if self.add_another_pet_flags[section].get():
+            nxt = 2 if section.endswith("1 Information") else 3
+            self.show_frame(nxt)
+        else:
+            self.export_to_excel()
 
-    def show_frame(self, index):
-        for frame in self.frames:
-            frame.grid_forget()
-        self.frames[index].grid(row=0, column=0, sticky='nsew')
-        self.current_frame = index
+    def show_frame(self, idx):
+        for f in self.frames:
+            f.grid_forget()
+        self.frames[idx].grid(row=0, column=0, sticky='nsew')
+        self.current_frame = idx
 
     def next_frame(self):
-        if self.current_frame < len(self.frames) - 1:
-            self.show_frame(self.current_frame + 1)
+        if self.current_frame < len(self.frames)-1:
+            self.show_frame(self.current_frame+1)
 
     def prev_frame(self):
         if self.current_frame > 0:
-            self.show_frame(self.current_frame - 1)
+            self.show_frame(self.current_frame-1)
 
     def export_to_excel(self):
-        # Get last name (assumed 2nd word from "Mail to Name")
-        name = self.data["Recipient Information"]["Mail to Name"].get().strip()
-        last_name = name.split()[-1] if name else "Unknown"
+        first = self.data["Recipient Information"]["First Name"].get().strip()
+        last = self.data["Recipient Information"]["Last Name"].get().strip()
+        name_folder = f"{first}{last}_{datetime.today().strftime('%m%d%Y')}"
+        desktop = Path.home() / "Desktop" / name_folder
+        desktop.mkdir(parents=True, exist_ok=True)
 
-        # Create filename
-        today = datetime.today().strftime('%Y-%m-%d')
-        filename = f"{last_name}_{today}.xlsx"
-        filepath = os.path.abspath(filename)
-
-        # Write to Excel
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "M-SNAP Form Data"
-
+        excel_path = desktop / f"{last}_{datetime.today().strftime('%Y-%m-%d')}.xlsx"
+        wb = Workbook(); ws = wb.active; ws.title = "M-SNAP Form Data"
         row = 1
         for section, fields in self.data.items():
-            ws.cell(row=row, column=1, value=section)
-            row += 1
-            for key, value in fields.items():
+            ws.cell(row=row, column=1, value=section); row+=1
+            for key, var in fields.items():
                 ws.cell(row=row, column=1, value=key)
-                ws.cell(row=row, column=2, value=value.get())
-                row += 1
-            row += 1
-
-        wb.save(filepath)
-
-        # Show success
-        messagebox.showinfo("Success", f"Data saved to {filename}")
-
-        # Print the file (Windows only)
-        try:
-            os.startfile(filepath, "print")
-        except Exception as e:
-            messagebox.showwarning("Print Error", f"Could not send to printer:\n{e}")
-
+                ws.cell(row=row, column=2, value=var.get())
+                row+=1
+            row+=1
+        wb.save(excel_path)
+        self.generate_documents(desktop, first, last)
+        self.append_to_extract()
+        messagebox.showinfo("Success", f"Form data saved to {excel_path}\nAll documents created.")
         self.restart_app()
 
-    def restart_app(self):
+    def fill_placeholders_in_docx(self, tmpl_path, out_path, ph):
+        doc = Document(tmpl_path)
+
+        def replace_text_in_paragraph(paragraph):
+            if not paragraph.runs:
+                return
+            full_text = ''.join(run.text for run in paragraph.runs)
+            for key, val in ph.items():
+                full_text = full_text.replace(key, val)
+            for run in paragraph.runs:
+                run.clear()
+            if paragraph.runs:
+                paragraph.runs[0].text = full_text
+            else:
+                paragraph.add_run(full_text)
+
+        for paragraph in doc.paragraphs:
+            replace_text_in_paragraph(paragraph)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_text_in_paragraph(paragraph)
+
+        doc.save(out_path)
+
+# [all previous code remains unchanged until inside generate_documents()]
+    def generate_documents(self, output_dir, first_name, last_name):
+        script_dir = Path(__file__).resolve().parent
+        base_dir = script_dir.parent
+        today_str = datetime.today().strftime('%m/%d/%Y')
+        today_file = datetime.today().strftime('%m%d%Y')
+
+        templates = {
+            "VOUCHER": "2025 Voucher Master.docx",
+            "COVER": "2025 Cover Letter Master.docx",
+            "LABEL": "Mailing Labels Master.docx"
+        }
+
+        recip = self.data["Recipient Information"]
+        pet_no = 1
+        for section in ["Pet 1 Information", "Pet 2 Information", "Pet 3 Information"]:
+            pet = self.data[section]
+            if not pet["Name"].get().strip():
+                continue
+
+            placeholders = {
+                "«Date»": today_str,
+                "«EXPIRES»": pet["Expires"].get(),
+                "«Voucher_ID»": pet["Voucher"].get(),
+                "«Customer_first_name»": first_name,
+                "«Customer_last_name»": last_name,
+                "«As_of_October_2010_Phone_Number»": recip["Day phone(s)"].get(),
+                "«Customer_street_NEVER_abbreviate_except»": recip["Street, Apt # OR PO Box"].get(),
+                "«Customer_city_CM__City_of_Morgantown»": recip["City"].get(),
+                "«Cust_zip_code»": recip["Zip"].get(),
+                "«Pet_Name»": pet["Name"].get(),
+                "«Dog__Cat»": pet["Species"].get(),
+                "«Spay_Neuter»": pet["Gender"].get(),
+                "«Breed»": pet["Breed"].get(),
+                "«Mailto_First_Name»": first_name,
+                "«Mailto_Last_Name»": last_name,
+                "«Street»": recip["Street, Apt # OR PO Box"].get(),
+                "«City»": recip["City"].get(),
+                "«Zip»": recip["Zip"].get(),
+                "«Next Record»": ""
+            }
+
+            for doc_type, fname in templates.items():
+                tmpl = base_dir / fname
+                if not tmpl.exists():
+                    tmpl = script_dir / fname
+                if not tmpl.exists():
+                    messagebox.showerror("Template Missing", f"Could not find template:\n· {base_dir/fname}\nor\n· {script_dir/fname}")
+                    return
+
+                out_name = output_dir / f"{last_name}_{today_file}_{doc_type}_{pet_no}.docx"
+
+                # For labels: replace all placeholder instances, not just the first set
+                if doc_type == "LABEL":
+                    self.fill_all_labels_in_docx(str(tmpl), str(out_name), placeholders)
+                else:
+                    self.fill_placeholders_in_docx(str(tmpl), str(out_name), placeholders)
+
+            pet_no += 1
+
+    def fill_all_labels_in_docx(self, tmpl_path, out_path, ph):
+        doc = Document(tmpl_path)
+
+        def replace_placeholders_in_paragraph(paragraph, placeholders):
+            full_text = ''.join(run.text for run in paragraph.runs)
+            updated_text = full_text
+            for key, value in placeholders.items():
+                updated_text = updated_text.replace(key, value)
+
+            if full_text != updated_text:
+                for run in paragraph.runs:
+                    run.text = ''  # Clear old content
+                if paragraph.runs:
+                    paragraph.runs[0].text = updated_text
+                else:
+                    paragraph.add_run(updated_text)
+
+        for paragraph in doc.paragraphs:
+            replace_placeholders_in_paragraph(paragraph, ph)
+
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_placeholders_in_paragraph(paragraph, ph)
+
+        doc.save(out_path)
+
+    def append_to_extract(self):
+        path = Path("INTAKE_EXTRACT.xlsm")
+        if not path.exists():
+            wb = Workbook(); ws = wb.active; ws.title = "Data"
+        else:
+            wb = load_workbook(path, keep_vba=True); ws = wb.active
+
+        row = ws.max_row + 1
         for section, fields in self.data.items():
+            for col, (_key, var) in enumerate(fields.items(), start=1):
+                ws.cell(row=row, column=col, value=var.get())
+        wb.save(path)
+
+    def restart_app(self):
+        for sec, fields in self.data.items():
             for key, var in fields.items():
-                if section.startswith("Pet") and key in self.dropdown_fields_common:
+                if sec.startswith("Pet") and key in self.dropdown_fields_common:
                     var.set("N/A")
-                elif section.startswith("Pet") and key in self.gender_field:
+                elif sec.startswith("Pet") and key in self.gender_field:
                     var.set("N/A")
+                elif sec == "Recipient Information" and key in self.yes_no_field:
+                    var.set("No")
                 else:
                     var.set("")
-        for var in self.add_another_pet_flags.values():
-            var.set(0)
+        for flag in self.add_another_pet_flags.values():
+            flag.set(0)
         self.show_frame(0)
 
 if __name__ == "__main__":
