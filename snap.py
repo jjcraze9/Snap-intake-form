@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from openpyxl import Workbook, load_workbook
 from datetime import datetime
 from docx import Document
@@ -109,7 +109,8 @@ class MSnapApp(tk.Tk):
             nxt = 2 if section.endswith("1 Information") else 3
             self.show_frame(nxt)
         else:
-            self.export_to_excel()
+            self.choose_output_folder()
+
 
     def show_frame(self, idx):
         for f in self.frames:
@@ -125,27 +126,35 @@ class MSnapApp(tk.Tk):
         if self.current_frame > 0:
             self.show_frame(self.current_frame-1)
 
-    def export_to_excel(self):
+    def choose_output_folder(self):
+        folder_selected = filedialog.askdirectory(title="Select Output Folder")
+        if folder_selected:
+            self.export_to_excel(Path(folder_selected))
+        else:
+            messagebox.showerror("Folder Error", "No folder selected!")
+
+    def export_to_excel(self, output_dir):
         first = self.data["Recipient Information"]["First Name"].get().strip()
         last = self.data["Recipient Information"]["Last Name"].get().strip()
-        name_folder = f"{first}{last}_{datetime.today().strftime('%m%d%Y')}"
-        desktop = Path.home() / "Desktop" / name_folder
-        desktop.mkdir(parents=True, exist_ok=True)
+        today = datetime.today()
+        name_folder = f"{first}{last}_{today.strftime('%m%d%Y')}"
+        folder_path = output_dir / name_folder
+        folder_path.mkdir(parents=True, exist_ok=True)
 
-        excel_path = desktop / f"{last}_{datetime.today().strftime('%Y-%m-%d')}.xlsx"
+        excel_path = folder_path / f"{last}_{today.strftime('%Y-%m-%d')}.xlsx"
         wb = Workbook(); ws = wb.active; ws.title = "M-SNAP Form Data"
         row = 1
         for section, fields in self.data.items():
-            ws.cell(row=row, column=1, value=section); row+=1
+            ws.cell(row=row, column=1, value=section)
+            row += 1
             for key, var in fields.items():
                 ws.cell(row=row, column=1, value=key)
                 ws.cell(row=row, column=2, value=var.get())
-                row+=1
-            row+=1
-        wb.save(excel_path)
-        self.generate_documents(desktop, first, last)
-        self.append_to_extract()
-        messagebox.showinfo("Success", f"Form data saved to {excel_path}\nAll documents created.")
+                row += 1
+            row += 1
+        self.generate_documents(folder_path, first, last)
+        self.append_to_voucher_tracker()
+        messagebox.showinfo("Success", f"Saved everything to {folder_path}")
         self.restart_app()
 
     def fill_placeholders_in_docx(self, tmpl_path, out_path, ph):
@@ -174,7 +183,6 @@ class MSnapApp(tk.Tk):
 
         doc.save(out_path)
 
-# [all previous code remains unchanged until inside generate_documents()]
     def generate_documents(self, output_dir, first_name, last_name):
         script_dir = Path(__file__).resolve().parent
         base_dir = script_dir.parent
@@ -262,18 +270,73 @@ class MSnapApp(tk.Tk):
 
         doc.save(out_path)
 
-    def append_to_extract(self):
-        path = Path("INTAKE_EXTRACT.xlsm")
-        if not path.exists():
-            wb = Workbook(); ws = wb.active; ws.title = "Data"
-        else:
-            wb = load_workbook(path, keep_vba=True); ws = wb.active
+    def append_to_voucher_tracker(self):
+        def find_first_empty_row(ws):
+            row = 1
+            while True:
+                if all(
+                    (ws.cell(row=row, column=col).value is None or str(ws.cell(row=row, column=col).value).strip() == "")
+                    for col in range(1, 16)
+                ):
+                    return row
+                row += 1
+                while (row == 32 or row == 33):
+                    row += 1
+        script_dir = Path(__file__).resolve().parent
+        default_path = script_dir / "M-SNAP VOUCHER TRACKER Master 2025.xlsm"
 
-        row = ws.max_row + 1
-        for section, fields in self.data.items():
-            for col, (_key, var) in enumerate(fields.items(), start=1):
-                ws.cell(row=row, column=col, value=var.get())
-        wb.save(path)
+        if not default_path.exists():
+            messagebox.showwarning(
+                "Voucher Tracker File Not Found.",
+                "Please select Voucher Tracker File"
+            )
+            file_path = filedialog.askopenfilename(
+                title="Select the Voucher Tracker file",
+                filetypes=[("Excel Macro-Enabled Workbook", "*.xlsm")]
+            )
+            if not file_path:
+                messagebox.showerror("Operation Cancelled", "No voucher tracker selected. Data will NOT be appended.")
+                return
+            path = Path(file_path)
+        else:
+            path = default_path
+
+        try:
+            wb = load_workbook(path, keep_vba=True)
+        
+            if "Vouchers" in wb.sheetnames:
+                ws = wb["Vouchers"]
+            else:
+                ws = wb.active
+
+            row = find_first_empty_row(ws)
+
+            recip = self.data["Recipient Information"]
+
+            for section_name in ["Pet 1 Information", "Pet 2 Information", "Pet 3 Information"]:
+                pet = self.data[section_name]
+                if not pet["Name"].get().strip():
+                    continue
+
+                ws.cell(row=row, column=1, value=datetime.today())
+                ws.cell(row=row, column=2, value=pet["Voucher"].get())  # Voucher ID
+                ws.cell(row=row, column=3, value=recip["First Name"].get())
+                ws.cell(row=row, column=4, value=recip["Last Name"].get())
+                ws.cell(row=row, column=5, value=pet["Name"].get())     # Pet Name
+                ws.cell(row=row, column=6, value=recip["City"].get())
+                ws.cell(row=row, column=7, value=recip["Zip"].get())
+                ws.cell(row=row, column=8, value=pet["Species"].get())  # Species
+                gender = pet["Gender"].get()
+                gender_export = "N" if gender == "Male" else ("S" if gender == "Female" else "")
+                ws.cell(row=row, column=9, value=gender_export)
+                ws.cell(row=row, column=10, value=pet["Stray?"].get())   
+                ws.cell(row=row, column=14, value=recip["Day phone(s)"].get())
+                ws.cell(row=row, column=15, value=recip["How did you hear about M-SNAP?"].get())
+                row += 1
+
+            wb.save(path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to append to the voucher tracker:\n{str(e)}")
 
     def restart_app(self):
         for sec, fields in self.data.items():
